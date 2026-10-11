@@ -9,13 +9,16 @@ class Base(DeclarativeBase):
 
 
 def make_engine(url: str):
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    engine = create_engine(url, connect_args=connect_args)
     if url.startswith("sqlite"):
+        engine = create_engine(url, connect_args={"check_same_thread": False, "timeout": 30})
+
         @event.listens_for(engine, "connect")
-        def _fk_on(dbapi_conn, _):
+        def _sqlite_pragmas(dbapi_conn, _):
             dbapi_conn.execute("PRAGMA foreign_keys=ON")
-    return engine
+            dbapi_conn.execute("PRAGMA journal_mode=WAL")
+
+        return engine
+    return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
 
 
 engine = make_engine(DATABASE_URL)

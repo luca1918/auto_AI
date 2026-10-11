@@ -1,5 +1,7 @@
-"""Money movement. Each operation runs in one DB transaction and uses conditional
-UPDATEs so balances can never go negative, even under concurrent requests."""
+"""Money movement. These functions only stage changes on the session; the caller commits.
+
+Debits are conditional UPDATEs so balances can never go negative, and transfers lock
+both accounts in id order so opposing concurrent transfers cannot deadlock."""
 
 import uuid
 
@@ -15,6 +17,10 @@ class BankingError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+def _lock(db: Session, *account_ids: int) -> None:
+    db.execute(select(Account.id).where(Account.id.in_(account_ids)).order_by(Account.id).with_for_update())
 
 
 def _debit(db: Session, account_id: int, amount: int) -> int:
@@ -38,34 +44,22 @@ def _credit(db: Session, account_id: int, amount: int) -> int:
     ).scalar_one()
 
 
-def _atomic(db: Session, fn):
-    try:
-        result = fn()
-        db.commit()
-        return result
-    except Exception:
-        db.rollback()
-        raise
-
-
 def deposit(db: Session, account: Account, amount: int, description: str = "") -> Transaction:
-    def op():
-        balance = _credit(db, account.id, amount)
-        tx = Transaction(account_id=account.id, kind="deposit", amount=amount, balance_after=balance,
-                         description=description or "Depunere", reference=str(uuid.uuid4()))
-        db.add(tx)
-        return tx
-    return _atomic(db, op)
+    balance = _credit(db, account.id, amount)
+    tx = Transaction(account_id=account.id, kind="deposit", amount=amount, balance_after=balance,
+                     description=description or "Depunere", reference=str(uuid.uuid4()))
+    db.add(tx)
+    db.flush()
+    return tx
 
 
 def withdraw(db: Session, account: Account, amount: int, description: str = "") -> Transaction:
-    def op():
-        balance = _debit(db, account.id, amount)
-        tx = Transaction(account_id=account.id, kind="withdrawal", amount=-amount, balance_after=balance,
-                         description=description or "Retragere", reference=str(uuid.uuid4()))
-        db.add(tx)
-        return tx
-    return _atomic(db, op)
+    balance = _debit(db, account.id, amount)
+    tx = Transaction(account_id=account.id, kind="withdrawal", amount=-amount, balance_after=balance,
+                     description=description or "Retragere", reference=str(uuid.uuid4()))
+    db.add(tx)
+    db.flush()
+    return tx
 
 
 def transfer(db: Session, source: Account, to_iban: str, amount: int, description: str = "") -> Transaction:
@@ -80,19 +74,18 @@ def transfer(db: Session, source: Account, to_iban: str, amount: int, descriptio
     if target.currency != source.currency:
         raise BankingError("Transferurile între monede diferite nu sunt suportate încă")
 
+    _lock(db, source.id, target.id)
     ref = str(uuid.uuid4())
-
-    def op():
-        src_balance = _debit(db, source.id, amount)
-        dst_balance = _credit(db, target.id, amount)
-        out_tx = Transaction(account_id=source.id, kind="transfer_out", amount=-amount,
-                             balance_after=src_balance, counterparty_iban=target.iban,
-                             description=description or "Transfer trimis", reference=ref)
-        db.add_all([
-            out_tx,
-            Transaction(account_id=target.id, kind="transfer_in", amount=amount,
-                        balance_after=dst_balance, counterparty_iban=source.iban,
-                        description=description or "Transfer primit", reference=ref),
-        ])
-        return out_tx
-    return _atomic(db, op)
+    src_balance = _debit(db, source.id, amount)
+    dst_balance = _credit(db, target.id, amount)
+    out_tx = Transaction(account_id=source.id, kind="transfer_out", amount=-amount,
+                         balance_after=src_balance, counterparty_iban=target.iban,
+                         description=description or "Transfer trimis", reference=ref)
+    db.add_all([
+        out_tx,
+        Transaction(account_id=target.id, kind="transfer_in", amount=amount,
+                    balance_after=dst_balance, counterparty_iban=source.iban,
+                    description=description or "Transfer primit", reference=ref),
+    ])
+    db.flush()
+    return out_tx

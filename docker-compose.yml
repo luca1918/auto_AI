@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bank
+      POSTGRES_DB: bank
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BANK_ENV: production
+      BANK_DATABASE_URL: postgresql+psycopg://bank:bank@db/bank
+      BANK_SECRET_KEY: ${BANK_SECRET_KEY:?set BANK_SECRET_KEY in .env or the shell}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:

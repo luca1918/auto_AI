@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
-from tests.conftest import signup
+from tests.conftest import balance, signup
 
 
 def test_register_creates_ron_account(client):
@@ -106,4 +106,4 @@ def test_concurrent_withdrawals_never_overdraw(client):
         codes = list(pool.map(withdraw, range(10)))
 
     assert codes.count(201) == 3
-    assert Decimal(client.get(f"/api/accounts/{acc['id']}", headers=h).json()["balance"]) == 10
+    assert balance(client, h, acc["id"]) == 10

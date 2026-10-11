@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:logging"
+filterwarnings = ["ignore::DeprecationWarning:starlette.*"]

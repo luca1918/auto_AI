@@ -16,8 +16,9 @@ function toast(msg, isError = false) {
   toast.t = setTimeout(() => (el.hidden = true), 3500);
 }
 
-async function api(path, { method = "GET", body } = {}) {
+async function api(path, { method = "GET", body, idempotencyKey } = {}) {
   const headers = { "Content-Type": "application/json" };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
@@ -172,11 +173,13 @@ $("#op-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const { amount, description, to_iban } = formData(e.target);
   const id = state.selectedId;
+  // One key per submission: if the request is retried, the server won't execute it twice.
+  const idempotencyKey = crypto.randomUUID();
   try {
     if (state.op === "transfer") {
-      await api("/api/transfers", { method: "POST", body: { from_account_id: id, to_iban, amount, description } });
+      await api("/api/transfers", { method: "POST", idempotencyKey, body: { from_account_id: id, to_iban, amount, description } });
     } else {
-      await api(`/api/accounts/${id}/${state.op}`, { method: "POST", body: { amount, description } });
+      await api(`/api/accounts/${id}/${state.op}`, { method: "POST", idempotencyKey, body: { amount, description } });
     }
     toast("Operațiune efectuată");
     e.target.reset();
