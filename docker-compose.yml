@@ -22,6 +22,7 @@ services:
       BANK_ENV: production
       BANK_DATABASE_URL: postgresql+psycopg://bank:bank@db/bank
       BANK_SECRET_KEY: ${BANK_SECRET_KEY:?set BANK_SECRET_KEY in .env or the shell}
+      BANK_CARD_ENCRYPTION_KEY: ${BANK_CARD_ENCRYPTION_KEY:-}
     ports:
       - "8000:8000"
 

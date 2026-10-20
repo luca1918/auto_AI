@@ -165,3 +165,44 @@ def test_amounts_serialized_as_strings(client):
     h, acc = signup(client)
     r = client.post(f"/api/accounts/{acc['id']}/deposit", json={"amount": "0.10"}, headers={**h, "Idempotency-Key": "s"})
     assert r.json()["amount"] == "0.10"
+
+
+# ---------- web app shell ----------
+
+def test_app_shell_and_security_headers(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "<title>AutoBank</title>" in r.text
+    csp = r.headers["Content-Security-Policy"]
+    assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+
+    sw = client.get("/sw.js")
+    assert sw.status_code == 200 and sw.headers["content-type"].startswith("text/javascript")
+    assert client.get("/static/manifest.webmanifest").json()["display"] == "standalone"
+    h, _ = signup(client)
+    assert client.get("/api/accounts", headers=h).headers["Cache-Control"] == "no-store"
+
+
+def test_demo_seed_keeps_ledger_consistent(client, session_factory):
+    from sqlalchemy import func
+
+    from app import seed
+    from app.models import Account, GoalEntry, SavingsGoal, Transaction
+
+    seed.main(session_factory)
+    seed.main(session_factory)  # idempotent: second run is a no-op
+    with session_factory() as db:
+        for acc in db.scalars(select(Account)):
+            total = db.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)).where(Transaction.account_id == acc.id))
+            assert acc.balance == total, acc.name
+        for goal in db.scalars(select(SavingsGoal)):
+            total = db.scalar(select(func.coalesce(func.sum(GoalEntry.amount), 0)).where(GoalEntry.goal_id == goal.id))
+            assert goal.balance == total, goal.name
+
+    r = client.post("/api/auth/login", json={"email": seed.EMAIL, "password": seed.PASSWORD})
+    h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    accounts = client.get("/api/accounts", headers=h).json()
+    stats = client.get("/api/stats", params={"account_id": accounts[0]["id"]}, headers=h).json()
+    assert sum(Decimal(m["expenses"]) for m in stats["months"]) > 0
+    assert len(client.get("/api/goals", headers=h).json()) == 3
+    assert len(client.get("/api/cards", headers=h).json()) == 1

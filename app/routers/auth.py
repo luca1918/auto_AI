@@ -8,7 +8,7 @@ from app import audit, config, iban as iban_lib
 from app.db import get_db
 from app.models import Account, User
 from app.ratelimit import RateLimiter
-from app.schemas import LoginIn, RegisterIn, TokenOut, UserOut
+from app.schemas import ChangePasswordIn, LoginIn, RegisterIn, TokenOut, UserOut
 from app.security import create_token, current_user, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -70,3 +70,13 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)):
     return user
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(auth_rate_limit)])
+def change_password(body: ChangePasswordIn, request: Request, user: User = Depends(current_user),
+                    db: Session = Depends(get_db)):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Parola curentă este greșită")
+    user.password_hash = hash_password(body.new_password)
+    audit.record(db, request, "user.password_changed", user.id)
+    db.commit()

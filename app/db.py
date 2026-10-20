@@ -16,6 +16,15 @@ def make_engine(url: str):
         def _sqlite_pragmas(dbapi_conn, _):
             dbapi_conn.execute("PRAGMA foreign_keys=ON")
             dbapi_conn.execute("PRAGMA journal_mode=WAL")
+            # Take over transaction control from pysqlite, which would otherwise run SELECTs
+            # outside any transaction (see the "begin" hook below).
+            dbapi_conn.isolation_level = None
+
+        @event.listens_for(engine, "begin")
+        def _sqlite_begin(conn):
+            # SQLite has no row locks; IMMEDIATE takes the write lock up front so read-then-write
+            # checks (card limits, balances) are serialized like SELECT ... FOR UPDATE on Postgres.
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
 
         return engine
     return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
