@@ -1,7 +1,19 @@
 // API client, session handling and a small cache of the customer's data.
 
 const TOKEN_KEY = "autobank.token";
-let token = sessionStorage.getItem(TOKEN_KEY);
+
+// Storage can be unavailable (private browsing, blocked site data); the app then keeps the session in memory.
+function readToken() {
+  try { return sessionStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+function writeToken(value) {
+  try {
+    if (value) sessionStorage.setItem(TOKEN_KEY, value);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch { /* memory only */ }
+}
+
+let token = readToken();
 const listeners = new Set();
 
 export class ApiError extends Error {
@@ -13,8 +25,7 @@ export const onLogout = (fn) => listeners.add(fn);
 
 export function setToken(value) {
   token = value;
-  if (value) sessionStorage.setItem(TOKEN_KEY, value);
-  else sessionStorage.removeItem(TOKEN_KEY);
+  writeToken(value);
 }
 
 export function logout(reason) {
